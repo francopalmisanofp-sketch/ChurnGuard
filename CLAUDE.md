@@ -113,6 +113,64 @@ recovery_metrics    -- aggregated for dashboard
 2. Recovery rate % (vs. industry benchmark ~50–60% for soft declines)
 3. Annual value saved (MRR recovered × 12)
 
+## Development Commands
+
+```bash
+npm run dev          # Start development server (http://localhost:3000)
+npm run build        # Production build (must pass before commits)
+npm run start        # Start production server
+npm run lint         # ESLint check
+npx drizzle-kit generate   # Generate DB migrations from schema
+npx drizzle-kit push       # Push schema directly to DB (development)
+npx drizzle-kit migrate    # Apply pending migrations (production)
+```
+
+## Project Structure
+
+```
+src/
+├── app/
+│   ├── (auth)/           # Login, signup (public routes)
+│   ├── (dashboard)/      # Protected dashboard pages
+│   ├── actions/          # Server Actions (auth, onboarding, payments, settings)
+│   ├── api/
+│   │   ├── webhooks/stripe/  # Stripe webhook endpoint (POST)
+│   │   └── cron/process-dunning/  # Hourly cron job (GET, requires CRON_SECRET)
+│   └── auth/callback/    # Supabase auth callback
+├── components/
+│   ├── dashboard/        # KPI cards, payments table, timeline, sidebar, header
+│   ├── onboarding/       # 3-step setup wizard
+│   └── ui/               # shadcn/ui primitives
+├── db/
+│   ├── schema.ts         # Drizzle ORM schema (6 tables + enums + relations)
+│   └── index.ts          # Lazy DB connection via Proxy
+├── lib/
+│   ├── supabase/         # Browser, server, and admin (service role) clients
+│   ├── stripe/           # Lazy Stripe client + decline classifier
+│   ├── dunning/          # Scheduler (job creation) + processor (job execution)
+│   ├── email/            # AI generator (Claude API), Resend sender, static templates
+│   ├── metrics/          # Recovery metrics aggregation
+│   └── auth.ts           # requireAuth(), getOrganization(), getAuthAndOrg()
+├── middleware.ts          # Route protection (dashboard/* requires auth)
+└── types/index.ts         # Drizzle inferred types + shared interfaces
+```
+
+## Key API Routes
+
+| Route | Method | Auth | Description |
+|-------|--------|------|-------------|
+| `/api/webhooks/stripe?org=<slug>` | POST | Stripe signature | Receives Stripe webhook events |
+| `/api/cron/process-dunning` | GET | `Bearer CRON_SECRET` | Processes pending dunning jobs |
+
+## Environment Variables
+
+See `.env.example` for the full list. Key variables:
+- `DATABASE_URL` — Supabase PostgreSQL connection string (lazy loaded)
+- `STRIPE_SECRET_KEY` — Stripe API key (lazy loaded via Proxy)
+- `ANTHROPIC_API_KEY` — Optional; if missing, AI generation falls back to static templates
+- `CRON_SECRET` — Protects the cron endpoint from unauthorized calls
+
 ## Reference Files
 
 - `research-churnguard-failed-payment-recovery.md` — full market research, competitor analysis, architecture trade-offs, and implementation roadmap
+- `PRD_ChurnGuard.md` — complete product requirements document with features, schema, user journeys, and roadmap

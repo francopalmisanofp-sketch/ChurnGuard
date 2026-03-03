@@ -1,0 +1,5 @@
+{
+  "plugins": {
+    "claude-infrastructure-template@gctechconsulting": true
+  }
+}

@@ -1,0 +1,545 @@
+{
+  "project": {
+    "name": "ChurnGuard",
+    "version": "2.0",
+    "date": "2026-03-04",
+    "status": "validated",
+    "phase": "MVP → Production-Ready",
+    "document": "docs/requirements/README.md"
+  },
+  "summary": {
+    "problem": "L'MVP di ChurnGuard dimostra il concetto ma non è deployabile per clienti reali: i job falliti muoiono silenziosamente, il link nelle email porta a 404, il billing è hardcoded e la sicurezza multi-tenant è solo applicativa.",
+    "solution": "Rendere production-ready il dunning engine con retry automatici e alert, implementare la pagina di aggiornamento carta funzionante con token sicuri e branding cliente, attivare il billing reale Starter/Growth, configurare RLS Supabase e rate limiting, migliorare il dashboard con trend e notifiche.",
+    "success_metrics": [
+      "0 job in stato failed definitivo per cause recuperabili (Resend/Claude down)",
+      "Tasso conversione link update-payment >= 15%",
+      "100% clienti attivi su piano Stripe reale",
+      "RLS attiva su tutte le tabelle, 0 data leak tra org",
+      "Dashboard carica in < 2s su LTE"
+    ]
+  },
+  "stakeholders": [
+    {
+      "role": "Founder ChurnGuard",
+      "responsibilities": ["Decisioni di prodotto", "Priorità", "Go/no-go"]
+    },
+    {
+      "role": "Team ChurnGuard (dev)",
+      "responsibilities": ["Sviluppo", "Riceve alert interni su fallimenti critici"]
+    }
+  ],
+  "users": [
+    {
+      "role": "Owner",
+      "description": "Founder/CTO della SaaS cliente",
+      "permissions": ["full access: settings, billing, tutti i dati"]
+    },
+    {
+      "role": "Admin",
+      "description": "Team operativo della SaaS cliente",
+      "permissions": ["dashboard", "settings (no billing)"]
+    },
+    {
+      "role": "Viewer",
+      "description": "Finance/ops manager",
+      "permissions": ["read-only dashboard"]
+    },
+    {
+      "role": "Subscriber (end user)",
+      "description": "Cliente finale della SaaS cliente",
+      "permissions": ["solo pagina update-payment, nessuna auth richiesta"]
+    }
+  ],
+  "requirements": {
+    "functional": [
+      {
+        "id": "FR-001",
+        "title": "Retry automatico job falliti con backoff",
+        "priority": "Must",
+        "area": "Dunning Engine — Affidabilità",
+        "description": "Quando un dunning job fallisce, il sistema lo ri-schedula aggiornando scheduled_at con backoff esponenziale (1h, 4h, 24h) e incrementando retry_count. Il cron lo riprende naturalmente. Al 4° fallimento lo marca definitivamente come failed e triggera gli alert.",
+        "db_changes": ["Aggiungere colonna retry_count INTEGER DEFAULT 0 NOT NULL a dunning_jobs"],
+        "acceptance_criteria": [
+          "DATO un job email che fallisce per timeout Claude API, QUANDO il cron gira all'ora successiva, ALLORA il job viene ritentato",
+          "DATO un job con retry_count = 3 che fallisce ancora, ALLORA status = failed definitivo e viene emesso un alert",
+          "DATO un job ri-schedulato con scheduled_at nel futuro, ALLORA il cron non lo processa prima della scadenza del backoff"
+        ]
+      },
+      {
+        "id": "FR-002",
+        "title": "Alert su job definitivamente falliti",
+        "priority": "Must",
+        "area": "Dunning Engine — Affidabilità",
+        "description": "Al 4° fallimento consecutivo di un job: (1) email interna a alerts@churnguard.com con dettagli org/job/errore, (2) notifica in-app nel dashboard del cliente con link al payment detail.",
+        "dependencies": ["FR-001", "FR-003"],
+        "acceptance_criteria": [
+          "DATO un job con retry_count = 3 che fallisce, ALLORA email inviata a alerts@churnguard.com entro 5 minuti",
+          "ALLORA notifica in-app appare nel dashboard del cliente",
+          "DATO un job che fallisce ai tentativi 1-3, ALLORA nessun alert viene emesso"
+        ]
+      },
+      {
+        "id": "FR-003",
+        "title": "Tabella notifiche in-app",
+        "priority": "Must",
+        "area": "Infrastruttura notifiche",
+        "description": "Nuova tabella notifications per memorizzare notifiche in-app scoped per organizzazione. Tipi: job_failed, payment_recovered, plan_past_due, plan_expiring.",
+        "db_changes": [
+          "CREATE TABLE notifications (id UUID PK, organization_id UUID FK, type TEXT, title TEXT, body TEXT, read BOOLEAN DEFAULT false, metadata JSONB, created_at TIMESTAMPTZ)"
+        ],
+        "acceptance_criteria": [
+          "Le notifiche sono scoped per organization_id con RLS",
+          "Server Action per marcare notifica come letta",
+          "Badge nella sidebar mostra conteggio non letti"
+        ]
+      },
+      {
+        "id": "FR-004",
+        "title": "Pagina pubblica aggiornamento carta",
+        "priority": "Must",
+        "area": "Subscriber Experience",
+        "description": "Route pubblica /update-payment/[token] accessibile senza auth. Mostra branding cliente, importo dovuto e Stripe Payment Element embedded. Gestisce validazione token, aggiornamento carta, retry invoice e pagine di esito.",
+        "dependencies": ["FR-005", "FR-006"],
+        "acceptance_criteria": [
+          "DATO un token valido, ALLORA pagina carica con branding cliente e importo corretto",
+          "DATO un token scaduto (> 30 giorni), ALLORA pagina mostra messaggio Link scaduto",
+          "DATO aggiornamento carta riuscito, ALLORA Stripe viene aggiornato e invoice rirtentata entro 60 secondi",
+          "La pagina funziona senza JavaScript disabilitato (graceful degradation)"
+        ]
+      },
+      {
+        "id": "FR-005",
+        "title": "Sistema token sicuri per update-payment",
+        "priority": "Must",
+        "area": "Sicurezza subscriber",
+        "description": "Ogni email di dunning genera un token UUID v4 opaco memorizzato in payment_tokens con scadenza 30 giorni. Il token non espone l'ID interno del pagamento.",
+        "db_changes": [
+          "CREATE TABLE payment_tokens (id UUID PK, token TEXT UNIQUE, failed_payment_id UUID FK, organization_id UUID FK, expires_at TIMESTAMPTZ, used_at TIMESTAMPTZ, created_at TIMESTAMPTZ)"
+        ],
+        "acceptance_criteria": [
+          "DATO un job email completato, ALLORA un record payment_tokens viene creato con expires_at = now + 30 giorni",
+          "DATO email multiple per lo stesso pagamento, ALLORA ogni email ha token distinto",
+          "DATO token con expires_at < now, ALLORA pagina update-payment lo rifiuta"
+        ]
+      },
+      {
+        "id": "FR-006",
+        "title": "Branding cliente (logo + colore primario)",
+        "priority": "Must",
+        "area": "Subscriber Experience / Personalizzazione",
+        "description": "Il cliente può caricare un logo e scegliere un colore primario nelle settings. Questi appaiono nella pagina update-payment al posto del brand ChurnGuard.",
+        "db_changes": [
+          "Aggiungere logo_url TEXT a organizations",
+          "Aggiungere brand_color TEXT DEFAULT #000000 a organizations"
+        ],
+        "acceptance_criteria": [
+          "DATO cliente con logo e brand_color configurati, ALLORA pagina update-payment mostra logo cliente e colore corretto",
+          "DATO cliente senza logo, ALLORA pagina mostra solo il nome azienda",
+          "Upload logo: formati PNG/JPG/SVG, max 2MB"
+        ]
+      },
+      {
+        "id": "FR-007",
+        "title": "Billing ChurnGuard: piani Starter e Growth",
+        "priority": "Must",
+        "area": "Monetizzazione",
+        "description": "Integrazione Stripe per i piani ChurnGuard. Starter $49/mo, Growth $99/mo. Stripe Checkout per nuovi clienti. Webhook aggiorna plan e plan_status nel DB. Customer Portal per self-service.",
+        "db_changes": [
+          "Aggiungere stripe_customer_id_churnguard TEXT a organizations",
+          "Aggiungere stripe_subscription_id_churnguard TEXT a organizations",
+          "Aggiungere plan_status TEXT DEFAULT trialing a organizations",
+          "Aggiungere plan_expires_at TIMESTAMPTZ a organizations"
+        ],
+        "acceptance_criteria": [
+          "DATO cliente che completa Checkout Stripe, ALLORA plan, plan_status, stripe_customer_id_churnguard aggiornati nel DB",
+          "DATO cliente in settings, ALLORA vede piano reale con data rinnovo",
+          "DATO upgrade da Starter a Growth, ALLORA Stripe gestisce il prorating automaticamente"
+        ]
+      },
+      {
+        "id": "FR-008",
+        "title": "Grace period e blocco engine su piano scaduto",
+        "priority": "Must",
+        "area": "Monetizzazione / Affidabilità",
+        "description": "Se il piano ChurnGuard non viene rinnovato: 7 giorni di grace period con engine attivo, poi blocco automatico. Notifiche in-app al giorno 0, 6 e 7. Riattivazione automatica al rinnovo.",
+        "dependencies": ["FR-007", "FR-003"],
+        "acceptance_criteria": [
+          "DATO org con plan_status = past_due da 6 giorni, ALLORA i job vengono processati normalmente",
+          "DATO org con plan_status = past_due da 8 giorni, ALLORA nessun job viene processato",
+          "DATO cliente che rinnova il piano, ALLORA il processor riprende entro 1h"
+        ]
+      },
+      {
+        "id": "FR-009",
+        "title": "Notifiche in-app real-time",
+        "priority": "Should",
+        "area": "Dashboard / UX",
+        "description": "Il dashboard propaga notifiche in tempo reale via Supabase Realtime per eventi: payment_recovered, job_failed, plan_past_due, plan_expiring. Badge con conteggio non letti nella sidebar.",
+        "dependencies": ["FR-003"],
+        "acceptance_criteria": [
+          "DATO pagamento recuperato via webhook, ALLORA notifica appare entro 30 secondi senza ricaricare pagina",
+          "DATO notifica non letta, ALLORA il badge nella sidebar mostra il numero corretto",
+          "DATO click su notifica payment_recovered, ALLORA navigazione al payment detail"
+        ]
+      },
+      {
+        "id": "FR-010",
+        "title": "Grafico trend mensile MRR recovered",
+        "priority": "Should",
+        "area": "Dashboard / Analytics",
+        "description": "Grafico a barre o linee che mostra MRR recovered e recovery rate per gli ultimi 6 mesi. Dati letti da recovery_metrics (già popolata dal cron).",
+        "acceptance_criteria": [
+          "DATO org con storico >= 2 mesi, ALLORA grafico mostra dati storici",
+          "DATO org nuova (< 1 mese), ALLORA grafico mostra solo mese corrente senza errori",
+          "Il grafico è responsivo e leggibile su mobile"
+        ]
+      },
+      {
+        "id": "FR-011",
+        "title": "Breakdown per tipo decline nel dashboard",
+        "priority": "Should",
+        "area": "Dashboard / Analytics",
+        "description": "Tabella nel dashboard con breakdown soft/hard/SCA: numero di fallimenti, recuperati e recovery rate per ciascun tipo. Periodo: mese corrente.",
+        "acceptance_criteria": [
+          "DATO org con tutti e tre i tipi di decline, ALLORA vede breakdown completo",
+          "DATO org con solo soft declines, ALLORA mostra solo riga soft senza errori"
+        ]
+      },
+      {
+        "id": "FR-012",
+        "title": "RLS policies Supabase su tutte le tabelle",
+        "priority": "Must",
+        "area": "Sicurezza / Multi-tenancy",
+        "description": "Configurare Row Level Security in Supabase su failed_payments, dunning_jobs, recovery_metrics, webhook_events, notifications, payment_tokens, organizations, organization_members. Service role per operazioni di sistema (cron, webhook). Helper function get_user_organization_id() con SECURITY DEFINER.",
+        "acceptance_criteria": [
+          "DATO due org A e B, QUANDO utente di A tenta di leggere failed_payments di B, ALLORA Supabase restituisce 0 risultati",
+          "DATO webhook handler (service role), ALLORA può scrivere su qualsiasi organizzazione",
+          "RLS non impatta performance dashboard (verificato con EXPLAIN ANALYZE)"
+        ]
+      },
+      {
+        "id": "FR-013",
+        "title": "Rate limiting webhook con Vercel KV",
+        "priority": "Must",
+        "area": "Sicurezza / Affidabilità",
+        "description": "Rate limiting distribuito su /api/webhooks/stripe con Vercel KV. Limite per organizzazione (slug): 1.000 req/min, 10.000 req/ora. Risposta 429 oltre soglia. Fail open se KV irraggiungibile.",
+        "acceptance_criteria": [
+          "DATO org che invia 1001 webhook nello stesso minuto, ALLORA la 1001esima riceve 429",
+          "DATO org nei limiti, ALLORA webhook processato normalmente",
+          "DATO Vercel KV irraggiungibile, ALLORA webhook processato senza rate limiting (fail open) con log warning"
+        ]
+      },
+      {
+        "id": "FR-014",
+        "title": "Settings page con dati reali",
+        "priority": "Should",
+        "area": "UI / Settings",
+        "description": "La settings page deve leggere e mostrare dati reali: nome org e dominio pre-compilati, upload logo e color picker, stato connessione Stripe reale con URL webhook copiabile, piano reale con data rinnovo e bottone upgrade, bottone Manage Subscription per Stripe Customer Portal.",
+        "dependencies": ["FR-006", "FR-007"],
+        "acceptance_criteria": [
+          "DATO cliente su piano Starter, ALLORA vede Starter — $49/month — Rinnovo il [data]",
+          "DATO click su Upgrade to Growth, ALLORA Stripe Checkout con piano Growth pre-selezionato",
+          "DATO click su Manage Subscription, ALLORA redirect al Stripe Customer Portal"
+        ]
+      },
+      {
+        "id": "FR-015",
+        "title": "Team management nelle settings",
+        "priority": "Should",
+        "area": "UI / Settings / Multi-tenancy",
+        "description": "Owner può invitare membri (email + ruolo admin/viewer via Supabase Auth magic link), revocare accesso, cambiare ruolo. Admin vede lista ma non può modificare. Viewer non vede la sezione.",
+        "acceptance_criteria": [
+          "DATO owner che invita membro, ALLORA membro riceve magic link e al login viene associato all'org con ruolo assegnato",
+          "DATO owner che revoca accesso, ALLORA al prossimo login il viewer viene reindirizzato a /login",
+          "DATO admin loggato, ALLORA vede lista membri senza bottoni di gestione"
+        ]
+      },
+      {
+        "id": "FR-016",
+        "title": "Unit test funzioni critiche",
+        "priority": "Could",
+        "area": "Testing / Qualità",
+        "description": "Unit test con Vitest per classifyDecline, scheduleDunningJobs e getStaticTemplate. Mock di tutte le dipendenze esterne. Coverage >= 80% sulle tre funzioni.",
+        "acceptance_criteria": [
+          "Tutti i test passano con npm test",
+          "Coverage >= 80% su classifyDecline, scheduleDunningJobs, getStaticTemplate",
+          "I test non fanno chiamate HTTP reali"
+        ]
+      },
+      {
+        "id": "FR-017",
+        "title": "Integration test webhook handler",
+        "priority": "Could",
+        "area": "Testing / Qualità",
+        "description": "Integration test per il webhook handler con DB di test isolato. Scenari: soft/hard decline, payment succeeded, evento duplicato, firma invalida.",
+        "acceptance_criteria": [
+          "DATO invoice.payment_failed soft decline, ALLORA failed_payments + 5 dunning_jobs creati",
+          "DATO stesso stripe_event_id due volte, ALLORA risposta duplicate: true, nessun record duplicato",
+          "DATO firma Stripe non valida, ALLORA risposta 400"
+        ]
+      },
+      {
+        "id": "FR-018",
+        "title": "Stripe Customer Portal per self-service billing",
+        "priority": "Should",
+        "area": "Billing / UX",
+        "description": "Server Action createPortalSession() per redirect al Stripe Customer Portal. Il cliente gestisce autonomamente upgrade, downgrade, aggiornamento carta ChurnGuard e download fatture.",
+        "dependencies": ["FR-007"],
+        "acceptance_criteria": [
+          "DATO click su Manage Subscription, ALLORA redirect al Customer Portal con sessione autenticata",
+          "DATO modifica piano nel portal, ALLORA webhook Stripe aggiorna organizations.plan nel DB"
+        ]
+      },
+      {
+        "id": "FR-019",
+        "title": "Pagina conferma post-aggiornamento carta",
+        "priority": "Must",
+        "area": "Subscriber Experience",
+        "description": "Dopo aggiornamento carta: pagina successo (pagamento elaborato, accesso ripristinato) o errore inline (carta rifiutata, riprova) o errore sistema (contatta supporto). Token rimane valido per errori di sistema.",
+        "dependencies": ["FR-004"],
+        "acceptance_criteria": [
+          "DATO pagamento andato a buon fine, ALLORA subscriber vede pagina successo e i job rimanenti vengono cancellati",
+          "DATO carta rifiutata, ALLORA subscriber può riprovare senza ricaricare la pagina",
+          "DATO errore sistema, ALLORA token rimane valido per nuovo tentativo"
+        ]
+      },
+      {
+        "id": "FR-020",
+        "title": "Onboarding: selezione piano prima del go-live",
+        "priority": "Must",
+        "area": "Onboarding / Billing",
+        "description": "Il wizard di onboarding include uno step di selezione piano (Starter/Growth) e Checkout Stripe prima dell'attivazione del dunning engine. Il dunning engine non è attivo finché plan_status != active.",
+        "dependencies": ["FR-007"],
+        "acceptance_criteria": [
+          "DATO nuovo utente che completa Checkout Stripe, ALLORA onboarding_completed = true e engine attivo",
+          "DATO utente che abbandona il Checkout, ALLORA al login successivo torna allo step selezione piano",
+          "DATO utente con plan_status != active, ALLORA reindirizzato all'onboarding, non al dashboard"
+        ]
+      },
+      {
+        "id": "FR-021",
+        "title": "Uso tabella recovery_metrics nel dashboard",
+        "priority": "Could",
+        "area": "Performance / Dashboard",
+        "description": "Il dashboard legge i KPI storici da recovery_metrics (pre-aggregato) invece di query dirette su failed_payments ad ogni caricamento. Solo i dati real-time del giorno corrente usano query dirette.",
+        "acceptance_criteria": [
+          "DATO org con 10.000 pagamenti storici, ALLORA dashboard carica in < 1 secondo",
+          "I KPI del mese corrente mostrano dati con al massimo 1h di ritardo"
+        ]
+      }
+    ],
+    "non_functional": [
+      {
+        "id": "NFR-001",
+        "category": "Performance",
+        "description": "Webhook endpoint risponde in < 200ms",
+        "metric": "99° percentile su Vercel Analytics"
+      },
+      {
+        "id": "NFR-002",
+        "category": "Performance",
+        "description": "Dashboard carica in < 2s",
+        "metric": "LCP su connessione LTE, 95° percentile"
+      },
+      {
+        "id": "NFR-003",
+        "category": "Performance",
+        "description": "Email Day 0 inviata entro 5 minuti dal fallimento",
+        "metric": "dunning_jobs.executed_at - failed_payments.created_at mediana"
+      },
+      {
+        "id": "NFR-004",
+        "category": "Affidabilità",
+        "description": "Zero job persi per errori transitori recuperabili",
+        "metric": "0 job failed definitivo per errori Resend/Claude con servizio tornato online"
+      },
+      {
+        "id": "NFR-005",
+        "category": "Affidabilità",
+        "description": "Idempotenza garantita su tutti gli eventi Stripe",
+        "metric": "0 duplicati in failed_payments per stesso stripe_event_id"
+      },
+      {
+        "id": "NFR-006",
+        "category": "Sicurezza",
+        "description": "Isolamento dati multi-tenant a livello DB",
+        "metric": "RLS Supabase attiva, 0 data leak verificabili via penetration test manuale"
+      },
+      {
+        "id": "NFR-007",
+        "category": "Sicurezza",
+        "description": "Token update-payment opachi e con scadenza",
+        "metric": "Token UUID v4, scadenza 30gg, 0 esposizione ID interno"
+      },
+      {
+        "id": "NFR-008",
+        "category": "Sicurezza",
+        "description": "Rate limiting webhook distribuito",
+        "metric": "Max 1.000 req/min per org, risposta 429 oltre soglia"
+      },
+      {
+        "id": "NFR-009",
+        "category": "Sicurezza",
+        "description": "Segreti mai nel codice o nei log",
+        "metric": "0 occorrenze di chiavi API in git history o output log"
+      },
+      {
+        "id": "NFR-010",
+        "category": "Scalabilità",
+        "description": "Sistema funzionante fino a 500 organizzazioni attive",
+        "metric": "Nessuna degradazione con 500 org e 250.000 failed_payments"
+      },
+      {
+        "id": "NFR-011",
+        "category": "Compliance",
+        "description": "GDPR: dati subscriber trattati come data processor",
+        "metric": "DPA disponibile, dati non usati per scopi diversi dal dunning"
+      },
+      {
+        "id": "NFR-012",
+        "category": "Usabilità",
+        "description": "Onboarding completabile in < 10 minuti da un founder tecnico",
+        "metric": "Misurato con test utente su campione di 5 persone"
+      }
+    ]
+  },
+  "entities": [
+    {
+      "name": "dunning_jobs",
+      "changes": "add_column",
+      "fields_added": [
+        { "name": "retry_count", "type": "integer", "default": 0, "required": true }
+      ]
+    },
+    {
+      "name": "organizations",
+      "changes": "add_columns",
+      "fields_added": [
+        { "name": "logo_url", "type": "text", "required": false },
+        { "name": "brand_color", "type": "text", "default": "#000000", "required": false },
+        { "name": "stripe_customer_id_churnguard", "type": "text", "required": false },
+        { "name": "stripe_subscription_id_churnguard", "type": "text", "required": false },
+        { "name": "plan_status", "type": "text", "default": "trialing", "required": true, "values": ["active", "past_due", "canceled", "trialing"] },
+        { "name": "plan_expires_at", "type": "timestamptz", "required": false }
+      ]
+    },
+    {
+      "name": "payment_tokens",
+      "changes": "new_table",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary_key": true },
+        { "name": "token", "type": "text", "unique": true, "required": true },
+        { "name": "failed_payment_id", "type": "uuid", "fk": "failed_payments.id", "on_delete": "cascade", "required": true },
+        { "name": "organization_id", "type": "uuid", "fk": "organizations.id", "on_delete": "cascade", "required": true },
+        { "name": "expires_at", "type": "timestamptz", "required": true },
+        { "name": "used_at", "type": "timestamptz", "required": false },
+        { "name": "created_at", "type": "timestamptz", "default": "now()", "required": true }
+      ],
+      "indexes": [
+        { "name": "token_lookup_idx", "columns": ["token"] }
+      ]
+    },
+    {
+      "name": "notifications",
+      "changes": "new_table",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary_key": true },
+        { "name": "organization_id", "type": "uuid", "fk": "organizations.id", "on_delete": "cascade", "required": true },
+        { "name": "type", "type": "text", "required": true, "values": ["job_failed", "payment_recovered", "plan_past_due", "plan_expiring"] },
+        { "name": "title", "type": "text", "required": true },
+        { "name": "body", "type": "text", "required": true },
+        { "name": "read", "type": "boolean", "default": false, "required": true },
+        { "name": "metadata", "type": "jsonb", "default": "{}", "required": false },
+        { "name": "created_at", "type": "timestamptz", "default": "now()", "required": true }
+      ],
+      "indexes": [
+        { "name": "notifications_org_unread_idx", "columns": ["organization_id", "read", "created_at DESC"] }
+      ]
+    }
+  ],
+  "migrations_required": [
+    "add_retry_count_to_dunning_jobs.sql",
+    "add_branding_and_billing_to_organizations.sql",
+    "create_payment_tokens.sql",
+    "create_notifications.sql",
+    "add_rls_policies.sql"
+  ],
+  "constraints": {
+    "technical": [
+      "Next.js App Router (TypeScript) — invariato",
+      "Supabase (PostgreSQL + RLS + Realtime) — invariato",
+      "Drizzle ORM — tutte le nuove tabelle devono avere schema Drizzle",
+      "Stripe — nessun altro gateway in scope",
+      "Resend — invariato",
+      "Anthropic SDK claude-sonnet-4-6 — invariato, con fallback template",
+      "Vercel — cron via Vercel Cron Jobs",
+      "Vercel KV — da aggiungere per rate limiting",
+      "Recharts (preferito) per grafici dashboard",
+      "Vitest (preferito) o Jest per testing",
+      "Supabase Storage per upload logo",
+      "@stripe/react-stripe-js per Stripe Payment Element"
+    ],
+    "compliance": [
+      "GDPR: DPA disponibile, dati subscriber usati solo per dunning",
+      "PCI-DSS: Stripe Payment Element gestisce i dati carta (nessun dato sensibile su ChurnGuard)"
+    ]
+  },
+  "mvp": {
+    "must_have": ["FR-001", "FR-002", "FR-003", "FR-004", "FR-005", "FR-006", "FR-007", "FR-008", "FR-012", "FR-013", "FR-019", "FR-020"],
+    "should_have": ["FR-009", "FR-010", "FR-011", "FR-014", "FR-015", "FR-018"],
+    "could_have": ["FR-016", "FR-017", "FR-021"],
+    "wont_have": [
+      "Piano percentage (8% recovered)",
+      "Sequence customization (timing personalizzabile)",
+      "E2E testing",
+      "Retention policy webhook_events",
+      "Win-back campaign",
+      "Cohort analytics",
+      "Stripe Connect OAuth"
+    ],
+    "assumptions": [
+      "Il cron Vercel che gira ogni ora rimane l'unico meccanismo di scheduling",
+      "Supabase Realtime è già disponibile nel piano Supabase attuale",
+      "Vercel KV è disponibile nel piano Vercel attuale",
+      "Il team ChurnGuard gestisce manualmente gli alert critici ricevuti via email",
+      "Il grace period di 7 giorni si applica uniformemente a tutti i clienti senza eccezioni"
+    ],
+    "risks": [
+      {
+        "description": "Race condition nel cron se eseguito due volte in contemporanea (es. Vercel edge)",
+        "probability": "Bassa",
+        "impact": "Alto — doppia esecuzione job",
+        "mitigation": "Valutare SELECT FOR UPDATE o advisory lock PostgreSQL sul fetch dei job pending"
+      },
+      {
+        "description": "Vercel KV irraggiungibile causa impossibilità di processare webhook",
+        "probability": "Bassa",
+        "impact": "Alto — webhook bloccati",
+        "mitigation": "Fail open: se KV irraggiungibile, processa senza rate limiting con log warning"
+      },
+      {
+        "description": "Stripe Customer Portal non configurato correttamente blocca self-service upgrade",
+        "probability": "Media",
+        "impact": "Medio — cliente non può upgradare",
+        "mitigation": "Configurare e testare il portal in ambiente staging prima del go-live"
+      }
+    ],
+    "open_questions": [
+      {
+        "question": "Il cron processor deve usare SELECT FOR UPDATE per evitare race condition quando Vercel esegue più istanze?",
+        "owner": "Tech Lead",
+        "priority": "Alta"
+      },
+      {
+        "question": "I limiti del piano Starter (500 pagamenti falliti/mese) devono essere enforced nel processor o solo mostrati come avviso?",
+        "owner": "Founder ChurnGuard",
+        "priority": "Media"
+      },
+      {
+        "question": "Il periodo di prova (trialing) prima di richiedere il pagamento del piano — durata? 14 giorni?",
+        "owner": "Founder ChurnGuard",
+        "priority": "Media"
+      }
+    ]
+  }
+}

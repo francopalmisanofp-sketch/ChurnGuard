@@ -145,6 +145,7 @@ See `.env.example` for the full list. Key variables:
 
 - **Server Actions**: one file per domain in `src/app/actions/` (auth, onboarding, payments, settings, update-payment). Always `"use server"` at top. Validate input with Zod. Public actions (no auth) use token validation instead of `requireAuth()`.
 - **Update-payment flow**: `getPaymentDetails()` → `createSetupIntent()` → `confirmAndRetryInvoice()` — all token-authenticated, no user session required
+- **Branding**: `uploadLogo()`, `updateBrandColor()`, `removeLogo()` in `settings.ts`. Logo stored in Supabase Storage bucket `logos` (public read, service-role write). Max 2MB, PNG/JPG/SVG only.
 - **New webhook event**: add a `case` in the `switch` block in `src/app/api/webhooks/stripe/route.ts` and create a `handleX()` function in the same file.
 - **UI components**: shadcn/ui primitives in `src/components/ui/`; domain components in `src/components/dashboard/` or `src/components/onboarding/`.
 - **Imports**: use `@/` path alias (maps to `src/`).

@@ -3,6 +3,7 @@ import { processPendingJobs } from "@/lib/dunning/processor";
 import { refreshMetrics } from "@/lib/metrics/refresh";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
+import { inArray } from "drizzle-orm";
 
 export const maxDuration = 60;
 
@@ -17,10 +18,13 @@ export async function GET(request: NextRequest) {
     // Process pending dunning jobs
     const processed = await processPendingJobs();
 
-    // Refresh metrics for all active organizations
+    // Refresh metrics only for orgs with active plans
     const allOrgs = await db
       .select({ id: organizations.id })
-      .from(organizations);
+      .from(organizations)
+      .where(
+        inArray(organizations.planStatus, ["active", "trialing", "past_due"])
+      );
 
     for (const org of allOrgs) {
       await refreshMetrics(org.id);

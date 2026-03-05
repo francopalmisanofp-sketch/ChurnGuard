@@ -7,10 +7,14 @@ import {
   dunningJobs,
   organizations,
 } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gte, sql } from "drizzle-orm";
 import { classifyDecline } from "@/lib/stripe/decline-classifier";
 import { scheduleDunningJobs } from "@/lib/dunning/scheduler";
 import { stripe } from "@/lib/stripe/client";
+import { notifications } from "@/db/schema";
+
+const STARTER_LIMIT = 500;
+const STARTER_WARNING = 400;
 
 export const maxDuration = 30;
 
@@ -81,7 +85,7 @@ export async function POST(request: NextRequest) {
   try {
     switch (event.type) {
       case "invoice.payment_failed":
-        await handlePaymentFailed(event.data.object as Stripe.Invoice, org.id);
+        await handlePaymentFailed(event.data.object as Stripe.Invoice, org);
         break;
       case "invoice.payment_succeeded":
         await handlePaymentSucceeded(event.data.object as Stripe.Invoice);
@@ -109,8 +113,63 @@ export async function POST(request: NextRequest) {
 
 async function handlePaymentFailed(
   invoice: Stripe.Invoice,
-  organizationId: string
+  org: typeof organizations.$inferSelect
 ) {
+  const organizationId = org.id;
+
+  // Check Starter plan monthly limit
+  if (org.plan === "starter") {
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(failedPayments)
+      .where(
+        and(
+          eq(failedPayments.organizationId, organizationId),
+          gte(failedPayments.createdAt, monthStart)
+        )
+      );
+
+    if (count >= STARTER_LIMIT) {
+      await db.insert(notifications).values({
+        organizationId,
+        type: "plan_expiring",
+        title: "Monthly limit reached",
+        body: `Your Starter plan limit of ${STARTER_LIMIT} failed payments/month has been reached. Upgrade to Growth for unlimited processing.`,
+        metadata: { limit: STARTER_LIMIT, count },
+      });
+      return; // Don't process — respond 200 to Stripe
+    }
+
+    if (count >= STARTER_WARNING && count < STARTER_LIMIT) {
+      // Warning notification at 80% (once per month)
+      const [existingWarning] = await db
+        .select({ id: notifications.id })
+        .from(notifications)
+        .where(
+          and(
+            eq(notifications.organizationId, organizationId),
+            eq(notifications.type, "plan_expiring"),
+            gte(notifications.createdAt, monthStart)
+          )
+        )
+        .limit(1);
+
+      if (!existingWarning) {
+        await db.insert(notifications).values({
+          organizationId,
+          type: "plan_expiring",
+          title: "Approaching monthly limit",
+          body: `You've used ${count}/${STARTER_LIMIT} failed payments this month. Upgrade to Growth for unlimited.`,
+          metadata: { limit: STARTER_LIMIT, count },
+        });
+      }
+    }
+  }
+
   const declineType = classifyDecline(
     invoice.last_finalization_error?.code ?? null,
     invoice.last_finalization_error?.message ?? null

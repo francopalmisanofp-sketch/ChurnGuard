@@ -27,7 +27,9 @@ Customer Stripe → invoice.payment_failed webhook
                           ↓
              dunning_jobs scheduled (soft/hard/sca schedules)
                           ↓
-             /api/cron/process-dunning (hourly)
+             Day 0 email sent immediately (best-effort, fallback to cron)
+                          ↓
+             /api/cron/process-dunning (hourly, remaining jobs)
              ├── soft decline → retry + email sequence (Day 0, 3, 7, 10)
              ├── hard decline → single email, no retry
              ├── Generate email via Claude API (fallback: static templates)
@@ -38,7 +40,7 @@ Customer Stripe → invoice.payment_failed webhook
 
 ### Webhook Events Handled
 
-- `invoice.payment_failed` → create failed_payment + schedule dunning jobs
+- `invoice.payment_failed` → create failed_payment + schedule dunning jobs + send Day 0 email immediately
 - `invoice.payment_succeeded` → cancel pending jobs, mark as recovered
 - `customer.subscription.deleted` → cancel pending jobs, mark as hard_churn
 
@@ -64,7 +66,11 @@ All tables use `uuid` PKs. Multi-tenancy via `organization_id` FK on every table
 
 - **Webhook idempotency**: store `stripe_event_id` in `webhook_events`, check before processing
 - **Webhook signature**: verify with `stripe.webhooks.constructEvent` using per-org `stripe_webhook_secret`
-- **Async processing**: webhook returns 200 immediately; dunning jobs are processed hourly by cron
+- **Immediate Day 0 email**: webhook sends Day 0 email synchronously (best-effort); on failure, falls back to cron via retry backoff
+- **Async processing**: webhook returns 200 immediately; remaining dunning jobs are processed hourly by cron (SKIP LOCKED)
+- **Dunning retry backoff**: failed jobs retry up to 3x with 1h/4h/24h intervals; definitive failures create in-app notifications
+- **Plan gate**: dunning jobs skip orgs with expired/canceled plans (7-day grace for past_due)
+- **Starter plan limit**: 500 failed payments/month; warning at 400, hard stop at 500
 - **Multi-tenancy**: all data scoped by `organization_id`; org resolved from `?org=<slug>` query param on webhook
 - **AI email fallback**: if `ANTHROPIC_API_KEY` missing or API fails, `getStaticTemplate()` is used
 - **Auth flow**: middleware protects `/dashboard/*` routes; Server Actions use `requireAuth()` or `getAuthAndOrg()` from `src/lib/auth.ts`

@@ -71,6 +71,7 @@ All tables use `uuid` PKs. Multi-tenancy via `organization_id` FK on every table
 - **Dunning retry backoff**: failed jobs retry up to 3x with 1h/4h/24h intervals; definitive failures create in-app notifications
 - **Plan gate**: dunning jobs skip orgs with expired/canceled plans (7-day grace for past_due)
 - **Starter plan limit**: 500 failed payments/month; warning at 400, hard stop at 500
+- **Secure payment tokens**: email URLs use opaque UUID tokens (30-day expiry) via `src/lib/tokens/payment-tokens.ts` — never expose internal IDs
 - **Multi-tenancy**: all data scoped by `organization_id`; org resolved from `?org=<slug>` query param on webhook
 - **AI email fallback**: if `ANTHROPIC_API_KEY` missing or API fails, `getStaticTemplate()` is used
 - **Auth flow**: middleware protects `/dashboard/*` routes; Server Actions use `requireAuth()` or `getAuthAndOrg()` from `src/lib/auth.ts`
@@ -103,6 +104,7 @@ src/
 │   ├── stripe/              # Lazy Stripe client + decline classifier
 │   ├── dunning/             # scheduler.ts (job creation) + processor.ts (job execution)
 │   ├── email/               # generator.ts (AI), sender.ts (Resend), templates.ts (static)
+│   ├── tokens/              # payment-tokens.ts (create, validate, invalidate)
 │   ├── metrics/             # Recovery metrics aggregation
 │   └── auth.ts              # requireAuth(), getOrganization(), getAuthAndOrg()
 ├── middleware.ts             # Route protection (dashboard/* requires auth)

@@ -9,6 +9,7 @@ import { eq, and, inArray, sql } from "drizzle-orm";
 import { generateDunningEmail } from "@/lib/email/generator";
 import { sendEmail } from "@/lib/email/sender";
 import { stripe } from "@/lib/stripe/client";
+import { createPaymentToken } from "@/lib/tokens/payment-tokens";
 import type { EmailGenerationContext } from "@/types";
 
 const GRACE_PERIOD_DAYS = 7;
@@ -179,7 +180,8 @@ export async function processEmailJob(
   org: typeof organizations.$inferSelect
 ): Promise<void> {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.churnguard.com";
-  const updatePaymentUrl = `${appUrl}/update-payment/${payment.id}`;
+  const token = await createPaymentToken(payment.id, payment.organizationId);
+  const updatePaymentUrl = `${appUrl}/update-payment/${token}`;
 
   const ctx: EmailGenerationContext = {
     customerName: payment.customerName ?? "",

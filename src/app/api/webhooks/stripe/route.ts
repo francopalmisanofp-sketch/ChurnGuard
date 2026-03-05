@@ -10,6 +10,7 @@ import {
 import { eq, and, gte, sql } from "drizzle-orm";
 import { classifyDecline } from "@/lib/stripe/decline-classifier";
 import { scheduleDunningJobs } from "@/lib/dunning/scheduler";
+import { processEmailJob } from "@/lib/dunning/processor";
 import { stripe } from "@/lib/stripe/client";
 import { notifications } from "@/db/schema";
 
@@ -202,6 +203,34 @@ async function handlePaymentFailed(
 
   // Schedule dunning jobs
   await scheduleDunningJobs(payment);
+
+  // Immediate Day 0 email — best-effort, silent fallback to cron
+  try {
+    const [day0Job] = await db
+      .select()
+      .from(dunningJobs)
+      .where(
+        and(
+          eq(dunningJobs.failedPaymentId, payment.id),
+          eq(dunningJobs.jobType, "email"),
+          eq(dunningJobs.attemptNumber, 0),
+          eq(dunningJobs.status, "pending")
+        )
+      )
+      .limit(1);
+
+    if (day0Job) {
+      await db
+        .update(dunningJobs)
+        .set({ status: "executing" })
+        .where(eq(dunningJobs.id, day0Job.id));
+
+      await processEmailJob(day0Job, payment, org);
+    }
+  } catch {
+    // Silent fallback — job stays pending or was reset by handleJobFailure,
+    // cron will pick it up in the next run
+  }
 }
 
 async function handlePaymentSucceeded(invoice: Stripe.Invoice) {

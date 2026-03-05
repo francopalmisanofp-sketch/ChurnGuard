@@ -173,7 +173,7 @@ export async function processPendingJobs(): Promise<number> {
   return processed;
 }
 
-async function processEmailJob(
+export async function processEmailJob(
   job: typeof dunningJobs.$inferSelect,
   payment: typeof failedPayments.$inferSelect,
   org: typeof organizations.$inferSelect

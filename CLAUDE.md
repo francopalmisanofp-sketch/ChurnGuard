@@ -130,7 +130,8 @@ npm run lint         # ESLint check
 
 | Route | Method | Auth | Description |
 |-------|--------|------|-------------|
-| `/api/webhooks/stripe?org=<slug>` | POST | Stripe signature | Receives Stripe webhook events |
+| `/api/webhooks/stripe?org=<slug>` | POST | Stripe signature (per-org) | Receives customer Stripe webhook events |
+| `/api/webhooks/stripe-churnguard` | POST | Stripe signature (global) | ChurnGuard own billing webhook |
 | `/api/cron/process-dunning` | GET | `Bearer CRON_SECRET` | Processes pending dunning jobs |
 
 ## Environment Variables
@@ -140,11 +141,14 @@ See `.env.example` for the full list. Key variables:
 - `STRIPE_SECRET_KEY` — Stripe API key
 - `ANTHROPIC_API_KEY` — optional; if missing, AI email generation falls back to static templates
 - `CRON_SECRET` — protects the cron endpoint
+- `STRIPE_CHURNGUARD_WEBHOOK_SECRET` — webhook secret for ChurnGuard billing events
+- `STRIPE_STARTER_PRICE_ID` / `STRIPE_GROWTH_PRICE_ID` — Stripe Price IDs for plans
 
 ## Conventions
 
 - **Server Actions**: one file per domain in `src/app/actions/` (auth, onboarding, payments, settings, update-payment). Always `"use server"` at top. Validate input with Zod. Public actions (no auth) use token validation instead of `requireAuth()`.
 - **Update-payment flow**: `getPaymentDetails()` → `createSetupIntent()` → `confirmAndRetryInvoice()` — all token-authenticated, no user session required
+- **Billing**: `startCheckout()`, `openCustomerPortal()` in `billing.ts`. Uses `src/lib/stripe/churnguard-billing.ts` for Stripe Checkout + Customer Portal. Dedicated webhook at `/api/webhooks/stripe-churnguard` syncs plan state (`checkout.session.completed`, `subscription.updated/deleted`, `invoice.payment_failed/succeeded`).
 - **Branding**: `uploadLogo()`, `updateBrandColor()`, `removeLogo()` in `settings.ts`. Logo stored in Supabase Storage bucket `logos` (public read, service-role write). Max 2MB, PNG/JPG/SVG only.
 - **New webhook event**: add a `case` in the `switch` block in `src/app/api/webhooks/stripe/route.ts` and create a `handleX()` function in the same file.
 - **UI components**: shadcn/ui primitives in `src/components/ui/`; domain components in `src/components/dashboard/` or `src/components/onboarding/`.

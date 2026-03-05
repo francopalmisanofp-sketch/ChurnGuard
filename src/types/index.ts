@@ -5,6 +5,9 @@ import type {
   dunningJobs,
   recoveryMetrics,
   webhookEvents,
+  paymentTokens,
+  notifications,
+  invitations,
 } from "@/db/schema";
 
 // Inferred types from Drizzle schema
@@ -26,6 +29,15 @@ export type NewRecoveryMetric = typeof recoveryMetrics.$inferInsert;
 export type WebhookEvent = typeof webhookEvents.$inferSelect;
 export type NewWebhookEvent = typeof webhookEvents.$inferInsert;
 
+export type PaymentToken = typeof paymentTokens.$inferSelect;
+export type NewPaymentToken = typeof paymentTokens.$inferInsert;
+
+export type Notification = typeof notifications.$inferSelect;
+export type NewNotification = typeof notifications.$inferInsert;
+
+export type Invitation = typeof invitations.$inferSelect;
+export type NewInvitation = typeof invitations.$inferInsert;
+
 // Decline types
 export type DeclineType = "soft" | "hard" | "sca_required";
 
@@ -44,6 +56,16 @@ export type JobStatus = "pending" | "executing" | "done" | "failed" | "cancelled
 // Org roles
 export type OrgRole = "owner" | "admin" | "viewer";
 export type OrgPlan = "starter" | "growth" | "percentage";
+
+// Plan statuses
+export type PlanStatus = "active" | "past_due" | "canceled" | "trialing";
+
+// Notification types
+export type NotificationType =
+  | "job_failed"
+  | "payment_recovered"
+  | "plan_past_due"
+  | "plan_expiring";
 
 // Email generation context
 export interface EmailGenerationContext {

@@ -48,6 +48,20 @@ export const orgPlanEnum = pgEnum("org_plan", [
   "percentage",
 ]);
 
+export const notificationTypeEnum = pgEnum("notification_type", [
+  "job_failed",
+  "payment_recovered",
+  "plan_past_due",
+  "plan_expiring",
+]);
+
+export const planStatusEnum = pgEnum("plan_status", [
+  "active",
+  "past_due",
+  "canceled",
+  "trialing",
+]);
+
 // --- Tables ---
 
 export const organizations = pgTable(
@@ -64,6 +78,12 @@ export const organizations = pgTable(
       .default(false)
       .notNull(),
     settings: jsonb("settings").default({}).$type<Record<string, unknown>>(),
+    logoUrl: text("logo_url"),
+    brandColor: text("brand_color").default("#000000"),
+    stripeCustomerIdChurnguard: text("stripe_customer_id_churnguard"),
+    stripeSubscriptionIdChurnguard: text("stripe_subscription_id_churnguard"),
+    planStatus: planStatusEnum("plan_status").default("trialing").notNull(),
+    planExpiresAt: timestamp("plan_expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -146,6 +166,7 @@ export const dunningJobs = pgTable(
       error?: string;
       emailId?: string;
     }>(),
+    retryCount: integer("retry_count").default(0).notNull(),
     emailSubject: text("email_subject"),
     emailBodyPreview: text("email_body_preview"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -197,6 +218,70 @@ export const webhookEvents = pgTable(
   (table) => [uniqueIndex("webhook_event_idx").on(table.stripeEventId)]
 );
 
+export const paymentTokens = pgTable(
+  "payment_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    token: text("token").notNull(),
+    failedPaymentId: uuid("failed_payment_id")
+      .references(() => failedPayments.id, { onDelete: "cascade" })
+      .notNull(),
+    organizationId: uuid("organization_id")
+      .references(() => organizations.id, { onDelete: "cascade" })
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [uniqueIndex("token_lookup_idx").on(table.token)]
+);
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .references(() => organizations.id, { onDelete: "cascade" })
+      .notNull(),
+    type: notificationTypeEnum("type").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    read: boolean("read").default(false).notNull(),
+    metadata: jsonb("metadata").default({}).$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("notifications_org_unread_idx").on(
+      table.organizationId,
+      table.read,
+      table.createdAt
+    ),
+  ]
+);
+
+export const invitations = pgTable(
+  "invitations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .references(() => organizations.id, { onDelete: "cascade" })
+      .notNull(),
+    email: text("email").notNull(),
+    role: orgRoleEnum("role").notNull(),
+    token: text("token").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [uniqueIndex("invitation_token_idx").on(table.token)]
+);
+
 // --- Relations ---
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -204,6 +289,9 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   failedPayments: many(failedPayments),
   dunningJobs: many(dunningJobs),
   recoveryMetrics: many(recoveryMetrics),
+  paymentTokens: many(paymentTokens),
+  notifications: many(notifications),
+  invitations: many(invitations),
 }));
 
 export const organizationMembersRelations = relations(
@@ -224,6 +312,7 @@ export const failedPaymentsRelations = relations(
       references: [organizations.id],
     }),
     dunningJobs: many(dunningJobs),
+    paymentTokens: many(paymentTokens),
   })
 );
 
@@ -243,6 +332,40 @@ export const recoveryMetricsRelations = relations(
   ({ one }) => ({
     organization: one(organizations, {
       fields: [recoveryMetrics.organizationId],
+      references: [organizations.id],
+    }),
+  })
+);
+
+export const paymentTokensRelations = relations(
+  paymentTokens,
+  ({ one }) => ({
+    failedPayment: one(failedPayments, {
+      fields: [paymentTokens.failedPaymentId],
+      references: [failedPayments.id],
+    }),
+    organization: one(organizations, {
+      fields: [paymentTokens.organizationId],
+      references: [organizations.id],
+    }),
+  })
+);
+
+export const notificationsRelations = relations(
+  notifications,
+  ({ one }) => ({
+    organization: one(organizations, {
+      fields: [notifications.organizationId],
+      references: [organizations.id],
+    }),
+  })
+);
+
+export const invitationsRelations = relations(
+  invitations,
+  ({ one }) => ({
+    organization: one(organizations, {
+      fields: [invitations.organizationId],
       references: [organizations.id],
     }),
   })

@@ -44,16 +44,19 @@ Customer Stripe → invoice.payment_failed webhook
 
 ## Database Schema
 
-Source of truth: `src/db/schema.ts` (Drizzle ORM, 6 tables + enums + relations).
+Source of truth: `src/db/schema.ts` (Drizzle ORM, 9 tables + 8 enums + relations).
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `organizations` | ChurnGuard customers (SaaS companies) | slug (unique), stripe_webhook_secret, plan |
+| `organizations` | ChurnGuard customers (SaaS companies) | slug (unique), stripe_webhook_secret, plan, plan_status, logo_url, brand_color |
 | `organization_members` | User-to-org mapping | user_id, role (`owner`/`admin`/`viewer`) |
-| `failed_payments` | Subscriber payments in dunning | decline_type (`soft`/`hard`/`sca_required`), status (`pending`/`in_dunning`/`recovered`/`hard_churn`/`cancelled`), dunning_step |
-| `dunning_jobs` | Scheduled retries and emails | job_type (`email`/`retry`), status (`pending`/`executing`/`done`/`failed`/`cancelled`), scheduled_at |
+| `failed_payments` | Subscriber payments in dunning | decline_type (`soft`/`hard`/`sca_required`), status, dunning_step |
+| `dunning_jobs` | Scheduled retries and emails | job_type (`email`/`retry`), status, scheduled_at, retry_count |
 | `recovery_metrics` | Aggregated per org/period | total_failed, total_recovered, recovery_rate, mrr_saved |
 | `webhook_events` | Idempotency store | stripe_event_id (unique), processed |
+| `payment_tokens` | Secure update-payment links | token (unique), failed_payment_id, expires_at, used_at |
+| `notifications` | In-app alerts | type (`job_failed`/`payment_recovered`/`plan_past_due`/`plan_expiring`), read |
+| `invitations` | Team member invites | email, role, token (unique), expires_at, accepted_at |
 
 All tables use `uuid` PKs. Multi-tenancy via `organization_id` FK on every table.
 

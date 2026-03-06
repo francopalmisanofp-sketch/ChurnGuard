@@ -11,7 +11,17 @@ export default async function DashboardLayout({
   const { user, org } = await getAuthAndOrg();
 
   if (!org) {
-    redirect("/dashboard/onboarding");
+    redirect("/onboarding");
+  }
+
+  // Plan gate: canceled orgs must re-subscribe
+  if (org.planStatus === "canceled") {
+    redirect("/onboarding?step=plan");
+  }
+
+  // Onboarding gate: incomplete onboarding
+  if (!org.onboardingCompleted) {
+    redirect("/onboarding");
   }
 
   return (

@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { processPendingJobs } from "@/lib/dunning/processor";
 import { refreshMetrics } from "@/lib/metrics/refresh";
 import { db } from "@/db";
-import { organizations } from "@/db/schema";
-import { inArray } from "drizzle-orm";
+import { organizations, notifications } from "@/db/schema";
+import { and, eq, inArray, lte } from "drizzle-orm";
 
 export const maxDuration = 60;
 
@@ -15,6 +15,28 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Sweep expired trials → past_due
+    const expiredTrials = await db
+      .update(organizations)
+      .set({ planStatus: "past_due", updatedAt: new Date() })
+      .where(
+        and(
+          eq(organizations.planStatus, "trialing"),
+          lte(organizations.planExpiresAt, new Date())
+        )
+      )
+      .returning({ id: organizations.id });
+
+    for (const org of expiredTrials) {
+      await db.insert(notifications).values({
+        organizationId: org.id,
+        type: "plan_expiring",
+        title: "Trial expired",
+        body: "Your 14-day trial has ended. Subscribe to a plan to continue using ChurnGuard.",
+        metadata: {},
+      });
+    }
+
     // Process pending dunning jobs
     const processed = await processPendingJobs();
 
@@ -32,6 +54,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      expiredTrials: expiredTrials.length,
       jobsProcessed: processed,
       orgsRefreshed: allOrgs.length,
     });

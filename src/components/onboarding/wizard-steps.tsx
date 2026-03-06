@@ -6,19 +6,32 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { saveWebhookSecret, saveEmailDomain, completeOnboarding } from "@/app/actions/onboarding";
+import { saveWebhookSecret, saveEmailDomain, completeOnboarding, skipToPlan } from "@/app/actions/onboarding";
+import { startCheckout } from "@/app/actions/billing";
 
 const STEPS = [
   { title: "Connect Stripe", description: "Enter your Stripe webhook secret" },
   { title: "Configure Email", description: "Set up your email sending domain" },
+  { title: "Choose Plan", description: "Select your ChurnGuard plan" },
   { title: "Go Live", description: "Review and activate your dunning engine" },
 ];
 
-export function OnboardingWizard({ orgSlug }: { orgSlug: string }) {
-  const [step, setStep] = useState(0);
+const PLAN_STEP = 2;
+
+export function OnboardingWizard({
+  orgSlug,
+  initialStep,
+}: {
+  orgSlug: string;
+  initialStep?: string;
+}) {
+  const startStep = initialStep === "plan" ? PLAN_STEP : 0;
+  const [step, setStep] = useState(startStep);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const router = useRouter();
+
+  const isPlanOnly = initialStep === "plan";
 
   async function handleStep1(formData: FormData) {
     setSaving(true);
@@ -40,7 +53,34 @@ export function OnboardingWizard({ orgSlug }: { orgSlug: string }) {
     if (result?.error) {
       setError(result.error);
     } else {
-      setStep(2);
+      setStep(PLAN_STEP);
+    }
+  }
+
+  async function handleSelectPlan(plan: "starter" | "growth") {
+    setSaving(true);
+    setError(null);
+    const result = await startCheckout(plan);
+    setSaving(false);
+    // startCheckout redirects on success; if we get here, there was an error
+    if (result?.error) {
+      setError(result.error);
+    }
+  }
+
+  async function handleSkipPlan() {
+    setSaving(true);
+    setError(null);
+    const result = await skipToPlan();
+    setSaving(false);
+    if (result?.error) {
+      setError(result.error);
+    } else {
+      if (isPlanOnly) {
+        router.push("/");
+      } else {
+        setStep(3);
+      }
     }
   }
 
@@ -52,35 +92,40 @@ export function OnboardingWizard({ orgSlug }: { orgSlug: string }) {
     if (result?.error) {
       setError(result.error);
     } else {
-      router.push("/dashboard");
+      router.push("/");
     }
   }
+
+  // Visible steps depend on mode
+  const visibleSteps = isPlanOnly ? [STEPS[PLAN_STEP]] : STEPS;
 
   return (
     <div className="mx-auto max-w-lg space-y-6">
       {/* Step indicator */}
-      <div className="flex items-center justify-center gap-2">
-        {STEPS.map((s, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <div
-              className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium ${
-                i <= step
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {i + 1}
-            </div>
-            {i < STEPS.length - 1 && (
+      {!isPlanOnly && (
+        <div className="flex items-center justify-center gap-2">
+          {STEPS.map((s, i) => (
+            <div key={i} className="flex items-center gap-2">
               <div
-                className={`h-px w-12 ${
-                  i < step ? "bg-primary" : "bg-border"
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium ${
+                  i <= step
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground"
                 }`}
-              />
-            )}
-          </div>
-        ))}
-      </div>
+              >
+                {i + 1}
+              </div>
+              {i < STEPS.length - 1 && (
+                <div
+                  className={`h-px w-12 ${
+                    i < step ? "bg-primary" : "bg-border"
+                  }`}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
@@ -161,12 +206,62 @@ export function OnboardingWizard({ orgSlug }: { orgSlug: string }) {
         </Card>
       )}
 
-      {/* Step 3: Go Live */}
-      {step === 2 && (
+      {/* Step 3: Choose Plan */}
+      {step === PLAN_STEP && (
         <Card>
           <CardHeader>
-            <CardTitle>{STEPS[2].title}</CardTitle>
-            <CardDescription>{STEPS[2].description}</CardDescription>
+            <CardTitle>{STEPS[PLAN_STEP].title}</CardTitle>
+            <CardDescription>{STEPS[PLAN_STEP].description}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => handleSelectPlan("starter")}
+                className="rounded-lg border p-4 text-left transition-colors hover:border-primary hover:bg-primary/5"
+              >
+                <div className="font-medium">Starter</div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Up to 500 failed payments/month. Perfect for getting started.
+                </p>
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => handleSelectPlan("growth")}
+                className="rounded-lg border border-primary p-4 text-left transition-colors hover:bg-primary/5"
+              >
+                <div className="font-medium">Growth</div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Unlimited failed payments. For scaling businesses.
+                </p>
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              {!isPlanOnly && (
+                <Button variant="outline" onClick={() => setStep(1)}>
+                  Back
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                onClick={handleSkipPlan}
+                disabled={saving}
+              >
+                {saving ? "Skipping..." : "Continue with free trial"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Step 4: Go Live */}
+      {step === 3 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>{STEPS[3].title}</CardTitle>
+            <CardDescription>{STEPS[3].description}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2 text-sm">
@@ -179,7 +274,7 @@ export function OnboardingWizard({ orgSlug }: { orgSlug: string }) {
               </ul>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep(1)}>
+              <Button variant="outline" onClick={() => setStep(PLAN_STEP)}>
                 Back
               </Button>
               <Button onClick={handleGoLive} disabled={saving}>

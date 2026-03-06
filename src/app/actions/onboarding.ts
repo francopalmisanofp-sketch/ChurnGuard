@@ -77,3 +77,19 @@ export async function completeOnboarding() {
 
   return { success: true };
 }
+
+export async function skipToPlan() {
+  const { org } = await getAuthAndOrg();
+  if (!org) return { error: "Organization not found" };
+
+  if (org.planStatus !== "trialing") {
+    return { error: "Only trialing organizations can skip plan selection" };
+  }
+
+  await db
+    .update(organizations)
+    .set({ onboardingCompleted: true, updatedAt: new Date() })
+    .where(eq(organizations.id, org.id));
+
+  return { success: true };
+}

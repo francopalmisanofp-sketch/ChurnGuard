@@ -76,6 +76,7 @@ export async function signup(formData: FormData) {
     .values({
       name: parsed.data.orgName,
       slug: `${slug}-${Date.now().toString(36)}`,
+      planExpiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
     })
     .returning();
 

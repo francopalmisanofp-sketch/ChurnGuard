@@ -12,6 +12,7 @@ import { classifyDecline } from "@/lib/stripe/decline-classifier";
 import { scheduleDunningJobs } from "@/lib/dunning/scheduler";
 import { processEmailJob } from "@/lib/dunning/processor";
 import { stripe } from "@/lib/stripe/client";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { notifications } from "@/db/schema";
 
 const STARTER_LIMIT = 500;
@@ -47,6 +48,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { error: "Organization not found" },
       { status: 404 }
+    );
+  }
+
+  // Rate limit check (per-org, fail open)
+  const rateLimit = await checkRateLimit(orgSlug);
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateLimit.retryAfter ?? 60) },
+      }
     );
   }
 

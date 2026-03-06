@@ -144,6 +144,7 @@ See `.env.example` for the full list. Key variables:
 - `CRON_SECRET` — protects the cron endpoint
 - `STRIPE_CHURNGUARD_WEBHOOK_SECRET` — webhook secret for ChurnGuard billing events
 - `STRIPE_STARTER_PRICE_ID` / `STRIPE_GROWTH_PRICE_ID` — Stripe Price IDs for plans
+- `KV_REST_API_URL` / `KV_REST_API_TOKEN` — Vercel KV for webhook rate limiting (optional; if missing, rate limiting is skipped)
 
 ## Conventions
 
@@ -152,6 +153,7 @@ See `.env.example` for the full list. Key variables:
 - **Billing**: `startCheckout()`, `openCustomerPortal()` in `billing.ts`. Uses `src/lib/stripe/churnguard-billing.ts` for Stripe Checkout + Customer Portal. Dedicated webhook at `/api/webhooks/stripe-churnguard` syncs plan state (`checkout.session.completed`, `subscription.updated/deleted`, `invoice.payment_failed/succeeded`).
 - **Trial & Plan gate**: New orgs get 14-day trial (`planExpiresAt = created_at + 14d`). Plan gate in `(dashboard)/layout.tsx` redirects `canceled` → `/onboarding?step=plan`. Cron sweeps expired trials → `past_due` + `plan_expiring` notification. `skipToPlan()` in `onboarding.ts` lets trialing orgs skip checkout.
 - **Team management**: `inviteMember()`, `revokeMember()`, `changeRole()`, `getMembers()`, `cancelInvitation()`, `getPendingInvitations()` in `team.ts`. Owner-only for mutations, Owner+Admin for reads. Accept-invitation at `/accept-invitation?token=`.
+- **Rate limiting**: `checkRateLimit(key)` in `src/lib/rate-limit.ts`. Fixed-window counters on Vercel KV (1000 req/min, 10000 req/hour per org). Fail open if KV unavailable. Applied to both webhook endpoints.
 - **Branding**: `uploadLogo()`, `updateBrandColor()`, `removeLogo()` in `settings.ts`. Logo stored in Supabase Storage bucket `logos` (public read, service-role write). Max 2MB, PNG/JPG/SVG only.
 - **New webhook event**: add a `case` in the `switch` block in `src/app/api/webhooks/stripe/route.ts` and create a `handleX()` function in the same file.
 - **UI components**: shadcn/ui primitives in `src/components/ui/`; domain components in `src/components/dashboard/` or `src/components/onboarding/`.

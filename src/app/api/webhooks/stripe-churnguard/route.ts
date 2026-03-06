@@ -5,6 +5,7 @@ import { webhookEvents, organizations, notifications } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { stripe } from "@/lib/stripe/client";
 import { getPlanFromPriceId } from "@/lib/stripe/churnguard-billing";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export const maxDuration = 30;
 
@@ -22,6 +23,18 @@ export async function POST(request: NextRequest) {
 
   if (!signature) {
     return NextResponse.json({ error: "Missing signature" }, { status: 400 });
+  }
+
+  // Rate limit check (global, fail open)
+  const rateLimit = await checkRateLimit("churnguard-billing");
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateLimit.retryAfter ?? 60) },
+      }
+    );
   }
 
   const webhookSecret = process.env.STRIPE_CHURNGUARD_WEBHOOK_SECRET;

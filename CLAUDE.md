@@ -88,6 +88,7 @@ src/
 │   ├── (auth)/              # Login, signup (public routes)
 │   ├── (dashboard)/         # Protected dashboard pages
 │   ├── accept-invitation/   # Public GET route to accept invitation via token
+│   ├── update-payment/[token]/ # Public payment update page (token-authenticated)
 │   ├── actions/             # Server Actions (auth, onboarding, payments, settings, team)
 │   ├── api/
 │   │   ├── webhooks/stripe/ # Stripe webhook endpoint (POST)
@@ -137,12 +138,15 @@ npm run test:coverage # With coverage report
 | `/api/webhooks/stripe?org=<slug>` | POST | Stripe signature (per-org) | Receives customer Stripe webhook events |
 | `/api/webhooks/stripe-churnguard` | POST | Stripe signature (global) | ChurnGuard own billing webhook |
 | `/api/cron/process-dunning` | GET | `Bearer CRON_SECRET` | Processes pending dunning jobs |
+| `/update-payment/[token]` | GET | Payment token | Public page for subscribers to update card |
+| `/update-payment/[token]/success` | GET | None | Static success page after payment recovery |
 
 ## Environment Variables
 
 See `.env.example` for the full list. Key variables:
 - `DATABASE_URL` — Supabase PostgreSQL connection string
 - `STRIPE_SECRET_KEY` — Stripe API key
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` — Stripe publishable key (used by update-payment page)
 - `ANTHROPIC_API_KEY` — optional; if missing, AI email generation falls back to static templates
 - `CRON_SECRET` — protects the cron endpoint
 - `STRIPE_CHURNGUARD_WEBHOOK_SECRET` — webhook secret for ChurnGuard billing events

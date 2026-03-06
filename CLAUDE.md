@@ -118,6 +118,9 @@ src/
 npm run dev          # Start development server (http://localhost:3000)
 npm run build        # Production build (must pass before commits)
 npm run lint         # ESLint check
+npm run test         # Run tests once
+npm run test:watch   # Watch mode
+npm run test:coverage # With coverage report
 ```
 
 ### Schema Migrations (Drizzle)
@@ -159,4 +162,4 @@ See `.env.example` for the full list. Key variables:
 - **UI components**: shadcn/ui primitives in `src/components/ui/`; domain components in `src/components/dashboard/` or `src/components/onboarding/`.
 - **Imports**: use `@/` path alias (maps to `src/`).
 - **Types**: Drizzle inferred types + shared interfaces in `src/types/index.ts`.
-- **No test suite yet**.
+- **Testing**: Vitest for unit tests. Test files colocated as `*.test.ts` next to source. Mock external deps (`@/db`, Stripe, Resend, Anthropic, `@vercel/kv`) with `vi.mock()`. Use `vi.hoisted()` for mock variables referenced inside `vi.mock()` factories.

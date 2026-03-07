@@ -7,6 +7,27 @@ import { getAuthAndOrg } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod/v4";
 
+export async function getOrgSettings() {
+  const { org } = await getAuthAndOrg();
+  if (!org) return null;
+  return {
+    id: org.id,
+    name: org.name,
+    slug: org.slug,
+    resendDomain: org.resendDomain,
+    logoUrl: org.logoUrl,
+    brandColor: org.brandColor,
+    plan: org.plan,
+    planStatus: org.planStatus,
+    planExpiresAt: org.planExpiresAt,
+    stripeWebhookSecret: !!org.stripeWebhookSecret,
+    stripeCustomerIdChurnguard: org.stripeCustomerIdChurnguard,
+    role: org.role,
+  };
+}
+
+export type OrgSettings = NonNullable<Awaited<ReturnType<typeof getOrgSettings>>>;
+
 const settingsSchema = z.object({
   name: z.string().min(2).max(100).optional(),
   resendDomain: z

@@ -97,6 +97,7 @@ src/
 │   └── auth/callback/       # Supabase auth callback
 ├── components/
 │   ├── dashboard/           # KPI cards, payments table, timeline, sidebar, header, notification bell, charts (Recharts)
+│   │   └── settings/        # Settings tab components (general, branding, billing, team)
 │   ├── onboarding/          # 3-step setup wizard
 │   └── ui/                  # shadcn/ui primitives
 ├── db/
@@ -168,6 +169,7 @@ See `.env.example` for the full list. Key variables:
 - **Branding**: `uploadLogo()`, `updateBrandColor()`, `removeLogo()` in `settings.ts`. Logo stored in Supabase Storage bucket `logos` (public read, service-role write). Max 2MB, PNG/JPG/SVG only.
 - **New webhook event**: add a `case` in the `switch` block in `src/app/api/webhooks/stripe/route.ts` and create a `handleX()` function in the same file.
 - **UI components**: shadcn/ui primitives in `src/components/ui/`; domain components in `src/components/dashboard/` or `src/components/onboarding/`.
+- **Settings page**: Server component (`settings/page.tsx`) fetches data, passes to `SettingsTabs` client wrapper with 4 tab components (General, Branding, Billing, Team). `getOrgSettings()` returns safe org subset (never exposes secrets).
 - **Imports**: use `@/` path alias (maps to `src/`).
 - **Types**: Drizzle inferred types + shared interfaces in `src/types/index.ts`.
 - **Testing**: Vitest for unit tests. Test files colocated as `*.test.ts` next to source. Mock external deps (`@/db`, Stripe, Resend, Anthropic, `@vercel/kv`) with `vi.mock()`. Use `vi.hoisted()` for mock variables referenced inside `vi.mock()` factories.

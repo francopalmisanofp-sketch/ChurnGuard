@@ -2,6 +2,7 @@ import { Sidebar } from "@/components/dashboard/sidebar";
 import { Header } from "@/components/dashboard/header";
 import { getAuthAndOrg } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { getUnreadCount } from "@/app/actions/notifications";
 
 export default async function DashboardLayout({
   children,
@@ -24,11 +25,13 @@ export default async function DashboardLayout({
     redirect("/onboarding");
   }
 
+  const unreadCount = await getUnreadCount();
+
   return (
     <div className="flex h-screen">
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <Header orgName={org.name} userEmail={user.email ?? ""} />
+        <Header orgName={org.name} userEmail={user.email ?? ""} orgId={org.id} initialUnreadCount={unreadCount} />
         <main className="flex-1 overflow-y-auto p-6">{children}</main>
       </div>
     </div>

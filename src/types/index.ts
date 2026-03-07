@@ -99,6 +99,17 @@ export interface DeclineBreakdownItem {
   count: number;
 }
 
+// Notification item (for UI)
+export interface NotificationItem {
+  id: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  read: boolean;
+  metadata: Record<string, unknown>;
+  createdAt: Date;
+}
+
 // Dashboard KPIs
 export interface DashboardKPIs {
   mrrRecovered: number;

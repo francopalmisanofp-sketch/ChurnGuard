@@ -7,13 +7,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { logout } from "@/app/actions/auth";
+import { NotificationBell } from "@/components/dashboard/notification-bell";
 
 interface HeaderProps {
   orgName: string;
   userEmail: string;
+  orgId: string;
+  initialUnreadCount: number;
 }
 
-export function Header({ orgName, userEmail }: HeaderProps) {
+export function Header({ orgName, userEmail, orgId, initialUnreadCount }: HeaderProps) {
   const initials = userEmail
     .split("@")[0]
     .slice(0, 2)
@@ -22,6 +25,8 @@ export function Header({ orgName, userEmail }: HeaderProps) {
   return (
     <header className="flex h-14 items-center justify-between border-b bg-card px-6">
       <div className="text-sm text-muted-foreground">{orgName}</div>
+      <div className="flex items-center gap-2">
+      <NotificationBell orgId={orgId} initialUnreadCount={initialUnreadCount} />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" className="relative h-8 w-8 rounded-full">
@@ -43,6 +48,7 @@ export function Header({ orgName, userEmail }: HeaderProps) {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
     </header>
   );
 }

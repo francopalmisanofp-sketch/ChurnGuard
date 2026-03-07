@@ -90,13 +90,13 @@ src/
 │   ├── (dashboard)/         # Protected dashboard pages
 │   ├── accept-invitation/   # Public GET route to accept invitation via token
 │   ├── update-payment/[token]/ # Public payment update page (token-authenticated)
-│   ├── actions/             # Server Actions (auth, onboarding, payments, settings, team)
+│   ├── actions/             # Server Actions (auth, onboarding, payments, settings, team, notifications)
 │   ├── api/
 │   │   ├── webhooks/stripe/ # Stripe webhook endpoint (POST)
 │   │   └── cron/process-dunning/ # Hourly cron job (GET, CRON_SECRET)
 │   └── auth/callback/       # Supabase auth callback
 ├── components/
-│   ├── dashboard/           # KPI cards, payments table, timeline, sidebar, header, charts (Recharts)
+│   ├── dashboard/           # KPI cards, payments table, timeline, sidebar, header, notification bell, charts (Recharts)
 │   ├── onboarding/          # 3-step setup wizard
 │   └── ui/                  # shadcn/ui primitives
 ├── db/
@@ -110,6 +110,8 @@ src/
 │   ├── tokens/              # payment-tokens.ts (create, validate, invalidate)
 │   ├── metrics/             # Recovery metrics aggregation
 │   └── auth.ts              # requireAuth(), getOrganization(), getAuthAndOrg()
+├── hooks/
+│   └── use-notifications.ts # Notification state + Supabase Realtime subscription
 ├── middleware.ts             # Route protection (dashboard/* requires auth)
 └── types/index.ts            # Drizzle inferred types + shared interfaces
 ```
@@ -156,7 +158,8 @@ See `.env.example` for the full list. Key variables:
 
 ## Conventions
 
-- **Server Actions**: one file per domain in `src/app/actions/` (auth, onboarding, payments, settings, update-payment, team). Always `"use server"` at top. Validate input with Zod. Public actions (no auth) use token validation instead of `requireAuth()`.
+- **Server Actions**: one file per domain in `src/app/actions/` (auth, onboarding, payments, settings, update-payment, team, notifications). Always `"use server"` at top. Validate input with Zod. Public actions (no auth) use token validation instead of `requireAuth()`.
+- **Notifications**: `useNotifications()` hook subscribes to Supabase Realtime (`postgres_changes` on `notifications` table). Requires Realtime enabled on `notifications` table in Supabase dashboard. Uses `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 - **Update-payment flow**: `getPaymentDetails()` → `createSetupIntent()` → `confirmAndRetryInvoice()` — all token-authenticated, no user session required
 - **Billing**: `startCheckout()`, `openCustomerPortal()` in `billing.ts`. Uses `src/lib/stripe/churnguard-billing.ts` for Stripe Checkout + Customer Portal. Dedicated webhook at `/api/webhooks/stripe-churnguard` syncs plan state (`checkout.session.completed`, `subscription.updated/deleted`, `invoice.payment_failed/succeeded`).
 - **Trial & Plan gate**: New orgs get 14-day trial (`planExpiresAt = created_at + 14d`). Plan gate in `(dashboard)/layout.tsx` redirects `canceled` → `/onboarding?step=plan`. Cron sweeps expired trials → `past_due` + `plan_expiring` notification. `skipToPlan()` in `onboarding.ts` lets trialing orgs skip checkout.

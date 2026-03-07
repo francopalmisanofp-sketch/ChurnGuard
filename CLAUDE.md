@@ -13,6 +13,7 @@
 | Payments (own billing) | Stripe |
 | Email delivery | Resend |
 | AI email generation | Anthropic SDK (`claude-sonnet-4-6`) |
+| Charts | Recharts |
 | ORM | Drizzle ORM |
 | Deployment | Vercel |
 
@@ -95,7 +96,7 @@ src/
 │   │   └── cron/process-dunning/ # Hourly cron job (GET, CRON_SECRET)
 │   └── auth/callback/       # Supabase auth callback
 ├── components/
-│   ├── dashboard/           # KPI cards, payments table, timeline, sidebar, header
+│   ├── dashboard/           # KPI cards, payments table, timeline, sidebar, header, charts (Recharts)
 │   ├── onboarding/          # 3-step setup wizard
 │   └── ui/                  # shadcn/ui primitives
 ├── db/

@@ -85,6 +85,20 @@ export interface GeneratedEmail {
   body: string;
 }
 
+// MRR Trend
+export interface MrrTrendPoint {
+  period: string;
+  mrrSaved: number;
+  totalFailed: number;
+  totalRecovered: number;
+}
+
+// Decline Breakdown
+export interface DeclineBreakdownItem {
+  declineType: string;
+  count: number;
+}
+
 // Dashboard KPIs
 export interface DashboardKPIs {
   mrrRecovered: number;
